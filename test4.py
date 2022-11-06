@@ -8,6 +8,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 # import pandas as pd
 import colorsys
+import pyclipper
 
 # index = ["color", "color_name", "hex", "R", "G", "B"]
 # csv_df = pd.read_csv('colors.csv', names=index, header=None)
@@ -161,6 +162,59 @@ def get_dominant_colors(infile, lt, rb):
     return dominant_color
 	# 10个主要颜色的图像
 
+def perimeter(poly):
+    p = 0
+    nums = poly.shape[0]
+    for i in range(nums):
+        p += abs(np.linalg.norm(poly[i % nums] - poly[(i + 1) % nums]))
+    return p
+
+def proportional_zoom_contour(contour, ratio):
+    """
+    多边形轮廓点按照比例进行缩放
+    :param contour: 一个图形的轮廓格式[[[x1, x2]],...],shape是(-1, 1, 2)
+    :param ratio: 缩放的比例，如果大于1是放大小于1是缩小
+    :return:
+    """
+    poly = contour[:, 0, :]
+    area_poly = abs(pyclipper.Area(poly))
+    perimeter_poly = perimeter(poly)
+    poly_s = []
+    pco = pyclipper.PyclipperOffset()
+    pco.MiterLimit = 10
+    if perimeter_poly:
+        d = area_poly * (1 - ratio * ratio) / perimeter_poly
+        pco.AddPath(poly, pyclipper.JT_MITER, pyclipper.ET_CLOSEDPOLYGON)
+        poly_s = pco.Execute(-d)
+    poly_s = np.array(poly_s).reshape(-1, 1, 2).astype(int)
+
+    return poly_s
+
+def get_text_color(originImg, cannyImg):
+
+
+    # kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(3, 3))
+
+    kernel = np.ones((3, 3),np.uint8)
+    _,RedThresh = cv2.threshold(originImg,127,255,cv2.THRESH_BINARY)
+    dilated = cv2.dilate(RedThresh,kernel)
+    dilated = cv2.cvtColor(dilated, cv2.COLOR_BGR2GRAY)
+
+    cnts,hierarchy = cv2.findContours(dilated,cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
+    # ncnts = proportional_zoom_contour(np.array(cnts[0]), 1.1)
+    if len(cnts)>=2 and (cnts[1] & cnts[1][0] & cnts[1][0][0]).any():
+        point = list(cnts[1][0][0])
+        # img=cv2.drawContours(originImg,[cnts[1]],-1,(0,255,0),1)
+        # cv2.imshow('new_image', img)
+        # cv2.waitKey()
+    else:
+        point = None
+    if point:
+        color = tuple(originImg[point[1], point[0]])
+    else:
+        color = (0,0,0)
+    return color
+
 def put_text_into_image(origin_cv_image, lt, rb, text, font):
     size = 3
     # print(lt, rb)
@@ -170,8 +224,15 @@ def put_text_into_image(origin_cv_image, lt, rb, text, font):
 
     # todo
     # 获取图片上文字颜色
-    color = get_color(text_img)
+    # color = get_color(text_img)
     # color = get_dominant_colors('cavity_enhance.png', lt, rb)
+    # 1. 获取轮廓，缩小轮廓让其刚好经过线上的点，取点的颜色
+    # 2. 获取轮廓，缩小轮廓让其刚好经过线上的点，取所有点的颜色的平均值
+    # 3. 将原图进行腐蚀，获取轮廓，缩小轮廓让其刚好经过线上的点，取点的颜色
+    # 4. 直方图，取2个波峰的值，一个是背景一个是字体颜色
+    # 5. 取区域内平均色值
+    color = get_text_color(text_img, cv2.Canny(text_img, 200, 150))
+
     # print(color)
     # 获取图片上文字颜色
 
