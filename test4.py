@@ -10,6 +10,19 @@ import pyclipper
 import requests
 import json
 
+url = "http://localhost:3336/overseas/translate"
+headers = {'content-type': 'application/json'}
+#微软雅黑字体
+fontType = './msyh.ttf'   
+
+def transformText(text):
+    texts = []
+    requestData = {"text": text}
+    ret = requests.post(url, json=requestData, headers=headers)
+    if ret.status_code == 200:
+        texts = json.loads(ret.text)
+        texts = texts['data']['TargetTextList']
+    return texts
 
 def detect(imagePath, lang):
     # 解析繁体/英文/数字
@@ -18,6 +31,8 @@ def detect(imagePath, lang):
     
     # origin_cv_image = cv2.imread(imagePath, cv2.IMREAD_UNCHANGED)
     origin_cv_image = cv2.imread(imagePath)
+    result = []
+    texts = []
 
     for detection in RST:
         # easyocr获取到文字区域的左上角坐标
@@ -26,35 +41,32 @@ def detect(imagePath, lang):
         right_bottom_coordinate = tuple(detection[0][2])
         # easyocr获取到的文字
         text = detection[1]
-        print(text)
-        # 翻译
-        url = "http://localhost:3336/overseas/translate"
-        headers = {'content-type': 'application/json'}
-        requestData = {"text": [text]}
-        ret = requests.post(url, json=requestData, headers=headers)
-        if ret.status_code == 200:
-            text = json.loads(ret.text)
-            text = text['data']['TargetTextList'][0]
-            print(text)
-        # 翻译
-        
-        #微软雅黑字体
-        fontType = './msyh.ttf'         
-        font = ImageFont.load_default()
-        #字体大小
-        fontScale = int(abs(left_top_coordinate[0] - right_bottom_coordinate[0]) / len(text))
-        fontScale = fontScale * 2
-        # 加载字体并定义其编码方式和大小
-        font = ImageFont.truetype(fontType, fontScale, encoding="unic")
-
-        origin_cv_image = put_text_into_image(
-            origin_cv_image, 
+        texts.append(text)
+              
+        result.append([
             left_top_coordinate, 
             right_bottom_coordinate, 
             text, 
-            font
+        ])
+        
+    # print(texts)
+    # print(result)
+    allTexts = transformText(texts)
+    for inx, val in enumerate(result):
+        ltc, rbc, t = val
+        font = ImageFont.load_default()
+        #字体大小
+        fontScale = int(abs(ltc[0] - rbc[0]) / len(allTexts[inx]))
+        fontScale = fontScale * 2
+        # 加载字体并定义其编码方式和大小
+        font = ImageFont.truetype(
+            fontType, 
+            fontScale, 
+            encoding="unic"
         )
-
+        origin_cv_image = put_text_into_image(
+            origin_cv_image, ltc, rbc, allTexts[inx], font
+        )
     return origin_cv_image
 
 
