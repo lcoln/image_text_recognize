@@ -7,17 +7,13 @@ import matplotlib.pyplot as plot
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import pyclipper
-import requests
-import json
-
 
 def detect(imagePath, lang):
     # 解析繁体/英文/数字
     reader = easyocr.Reader(lang)
     RST = reader.readtext(imagePath)
     
-    # origin_cv_image = cv2.imread(imagePath, cv2.IMREAD_UNCHANGED)
-    origin_cv_image = cv2.imread(imagePath)
+    origin_cv_image = cv2.imread(imagePath, cv2.IMREAD_UNCHANGED)
 
     for detection in RST:
         # easyocr获取到文字区域的左上角坐标
@@ -26,24 +22,11 @@ def detect(imagePath, lang):
         right_bottom_coordinate = tuple(detection[0][2])
         # easyocr获取到的文字
         text = detection[1]
-        print(text)
-        # 翻译
-        url = "http://localhost:3336/overseas/translate"
-        headers = {'content-type': 'application/json'}
-        requestData = {"text": [text]}
-        ret = requests.post(url, json=requestData, headers=headers)
-        if ret.status_code == 200:
-            text = json.loads(ret.text)
-            text = text['data']['TargetTextList'][0]
-            print(text)
-        # 翻译
-        
         #微软雅黑字体
         fontType = './msyh.ttf'         
         font = ImageFont.load_default()
         #字体大小
         fontScale = int(abs(left_top_coordinate[0] - right_bottom_coordinate[0]) / len(text))
-        fontScale = fontScale * 2
         # 加载字体并定义其编码方式和大小
         font = ImageFont.truetype(fontType, fontScale, encoding="unic")
 
@@ -64,14 +47,10 @@ def replace_zeroes(data):
     return data
 
 # 图像增强
-def enhance(img, size):
-    if len(img.shape)==3 and img.shape[2]==4:
-        rgb = cv2.split(img)
-    elif len(img.shape)==3 and img.shape[2]==3:
-        rgb = cv2.split(img)  
-
+def enhance(src_img, size):
+    b_gray, g_gray, r_gray = cv2.split(src_img)
     result = []
-    for it in rgb:
+    for it in [b_gray, g_gray, r_gray]:
         L_blur = cv2.GaussianBlur(it, (size, size), 0)
         img = replace_zeroes(it)
         L_blur = replace_zeroes(L_blur)
@@ -166,6 +145,17 @@ def put_text_into_image(origin_cv_image, lt, rb, text, font):
     text_img = origin_cv_image[lt[1]:rb[1], lt[0]:rb[0]] 
     # 裁剪文本坐标，[y0:y1, x0:x1]
 
+    # todo, 5个思路
+    # 1. 获取轮廓，缩小轮廓让其刚好经过线上的点，取点的颜色
+    # 2. 获取轮廓，缩小轮廓让其刚好经过线上的点，取所有点的颜色的平均值
+    # 3. 将原图进行腐蚀，获取轮廓，缩小轮廓让其刚好经过线上的点，取点的颜色
+    # 4. 直方图，取2个波峰的值，一个是背景一个是字体颜色
+    # 5. 取区域内平均色值
+    color = get_text_color(text_img, cv2.Canny(text_img, 200, 150))
+
+    # print(color)
+    # 获取图片上文字颜色
+
     # 增强图片
     result = enhance(text_img, size)
     # print(color_name)
@@ -191,17 +181,6 @@ def put_text_into_image(origin_cv_image, lt, rb, text, font):
     repair_cv_image = repair(origin_cv_image, lt, rb)
     # 图像修复
 
-    # todo, 5个思路
-    # 1. 获取轮廓，缩小轮廓让其刚好经过线上的点，取点的颜色
-    # 2. 获取轮廓，缩小轮廓让其刚好经过线上的点，取所有点的颜色的平均值
-    # 3. 将原图进行腐蚀，获取轮廓，缩小轮廓让其刚好经过线上的点，取点的颜色
-    # 4. 直方图，取2个波峰的值，一个是背景一个是字体颜色
-    # 5. 取区域内平均色值
-    color = get_text_color(text_img, cv2.Canny(text_img, 200, 150))
-
-    # print(color)
-    # 获取图片上文字颜色
-
     # 在修复完的图片块上写入文本
     return write(repair_cv_image, lt, rb, text, font, color)
     # 在修复完的图片块上写入文本
@@ -217,17 +196,12 @@ def write(IMG, lt, rb, text, font, color):
     #PIL图片转换为numpy
     img_ocv = np.array(img_pil)                     
     IMG = cv2.cvtColor(img_ocv,cv2.COLOR_RGB2BGR)
-    # 圈出图片上文字区域
-    # return cv2.rectangle(IMG, lt, rb, (0,255,0), 3)
-    return IMG
+    return cv2.rectangle(IMG, lt, rb, (0,255,0), 3)
 
 if __name__ == '__main__':
     # 读取文件
-    # imagePath = sys.argv[1]
-    _, imagePath, *lang = sys.argv
-    if(len(lang) == 0):
-        lang = ["ch_sim", "en"]
-    new_image = detect(sys.argv[1], lang)
+    imagePath = sys.argv[1]
+    new_image = detect(sys.argv[1], ['ch_sim', "en"])
     
     cv2.imshow('new_image', new_image)
     cv2.waitKey()

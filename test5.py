@@ -8,7 +8,6 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 # import pandas as pd
 import colorsys
-import imutils
 import pyclipper
 
 # index = ["color", "color_name", "hex", "R", "G", "B"]
@@ -19,7 +18,7 @@ def detect(imagePath, lang):
     reader = easyocr.Reader(lang)
     RST = reader.readtext(imagePath)
     
-    origin_cv_image = cv2.imread(imagePath, cv2.IMREAD_UNCHANGED)
+    origin_cv_image = cv2.imread(imagePath)
 
     for detection in RST:
         # easyocr获取到文字区域的左上角坐标
@@ -163,19 +162,6 @@ def get_dominant_colors(infile, lt, rb):
     return dominant_color
 	# 10个主要颜色的图像
 
-
-def compute(img):
-    per_image_Rmean = []
-    per_image_Gmean = []
-    per_image_Bmean = []
-    per_image_Rmean.append(np.mean(img[:,:,0]))
-    per_image_Gmean.append(np.mean(img[:,:,1]))
-    per_image_Bmean.append(np.mean(img[:,:,2]))
-    R_mean = np.mean(per_image_Rmean)
-    G_mean = np.mean(per_image_Gmean)
-    B_mean = np.mean(per_image_Bmean)
-    return int(R_mean), int(G_mean), int(B_mean)
-
 def perimeter(poly):
     p = 0
     nums = poly.shape[0]
@@ -204,39 +190,29 @@ def proportional_zoom_contour(contour, ratio):
 
     return poly_s
 
-def findColor(originImg, cannyImg):
-    # resized = imutils.resize(cannyImg, width=900)
-    # ratio = cannyImg.shape[0] / float(resized.shape[0])
-    # gray = cv2.cvtColor(cannyImg, cv2.COLOR_BGR2GRAY)
-    # img = cannyImg
-    # _ret, img2 = cv2.threshold(img, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    # kernel = np.ones((3, 3), np.uint8)
-    # opn = cv2.morphologyEx(img2, cv2.MORPH_OPEN, kernel)
-    # dist = cv2.distanceTransform(opn, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
+def get_text_color(originImg, cannyImg):
 
-    # # dist = cv2.distanceTransform(originImg, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
-    # ring = cv2.inRange(dist, 0, 255)
 
-    cnts,hierarchy = cv2.findContours(cannyImg,cv2.RETR_TREE,cv2.CHAIN_APPROX_NONE,None,None)
+    # kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(3, 3))
 
-    # ret, thresh = cv2.threshold(cannyImg, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-    # cnts,hierarchy = cv2.findContours(
-    #     thresh.copy(), 
-    #     cv2.RETR_EXTERNAL, 
-    #     cv2.CHAIN_APPROX_NONE, 
-    # )
+    kernel = np.ones((3, 3),np.uint8)
+    _,RedThresh = cv2.threshold(originImg,127,255,cv2.THRESH_BINARY)
+    dilated = cv2.dilate(RedThresh,kernel)
+    dilated = cv2.cvtColor(dilated, cv2.COLOR_BGR2GRAY)
 
-    ncnts = proportional_zoom_contour(np.array(cnts[2]), 1.1)
-
-    point = list(ncnts[0][0])
-    color = tuple(originImg[point[1], point[0]])
-    print(color)
-    # # if you want cv2.contourArea >1, you can just comment line bellow
-    # cnts = np.array(cnts)[[cv2.contourArea(c)>10 for c in cnts]]
-    # img=cv2.drawContours(originImg,[cnts[1]],-1,(0,255,0),1)
-    # cv2.imshow('drawimg',img)
-    # cv2.waitKey()
-    # cv2.destroyAllWindows()
+    cnts,hierarchy = cv2.findContours(dilated,cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
+    # ncnts = proportional_zoom_contour(np.array(cnts[0]), 1.1)
+    if len(cnts)>=2 and (cnts[1] & cnts[1][0] & cnts[1][0][0]).any():
+        point = list(cnts[1][0][0])
+        # img=cv2.drawContours(originImg,[cnts[1]],-1,(0,255,0),1)
+        # cv2.imshow('new_image', img)
+        # cv2.waitKey()
+    else:
+        point = None
+    if point:
+        color = tuple(originImg[point[1], point[0]])
+    else:
+        color = (0,0,0)
     return color
 
 def put_text_into_image(origin_cv_image, lt, rb, text, font):
@@ -244,13 +220,19 @@ def put_text_into_image(origin_cv_image, lt, rb, text, font):
     # print(lt, rb)
     # 裁剪文本坐标，[y0:y1, x0:x1]
     text_img = origin_cv_image[lt[1]:rb[1], lt[0]:rb[0]] 
-    cv2.imwrite('text_img.png', text_img)
     # 裁剪文本坐标，[y0:y1, x0:x1]
 
     # todo
     # 获取图片上文字颜色
-    color = get_color(text_img)
+    # color = get_color(text_img)
     # color = get_dominant_colors('cavity_enhance.png', lt, rb)
+    # 1. 获取轮廓，缩小轮廓让其刚好经过线上的点，取点的颜色
+    # 2. 获取轮廓，缩小轮廓让其刚好经过线上的点，取所有点的颜色的平均值
+    # 3. 将原图进行腐蚀，获取轮廓，缩小轮廓让其刚好经过线上的点，取点的颜色
+    # 4. 直方图，取2个波峰的值，一个是背景一个是字体颜色
+    # 5. 取区域内平均色值
+    color = get_text_color(text_img, cv2.Canny(text_img, 200, 150))
+
     # print(color)
     # 获取图片上文字颜色
 
@@ -260,42 +242,9 @@ def put_text_into_image(origin_cv_image, lt, rb, text, font):
     cv2.imwrite('cavity_enhance.png', result)
     # 增强图片
 
-
-
     # 边缘检测
-    img = cv2.imread('text_img.png')
-    # img_gray=cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
-    # retv,thresh = cv2.threshold(img_gray,125,255,1)
-    # contours,hierarchy = cv2.findContours(thresh,cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
-    
-    # length = len(contours[0])
-    # # [x0, y0]
-    # co1 = contours[0][0][0]
-    # # [x1, y1]
-    # co2 = contours[0][length - 1][0]
-    # # 裁剪原图坐标为[y0:y1, x0:x1]
-    # i = img[co1[1]:co2[1], co1[0]:co2[0]]  
-    # print(i, 11111)
-
-
-    
-
-    # grains = [np.int0(cv2.boxPoints(cv2.minAreaRect(c))) for c in cnts]
-    # centroids =[(grain[2][1]-(grain[2][1]-grain[0][1])//2, grain[2][0]-(grain[2][0]-grain[0][0])//2) for grain in grains]
-
-    # colors = [resized[centroid] for centroid in centroids]
-    # r = []
-    # g = []
-    # b = []
-    # for it in colors:
-    #     r.append(it[0])
-    #     g.append(it[1])
-    #     b.append(it[2])
-
-    # # color = compute(img)
-    # color = (int(np.mean(r)), int(np.mean(g)), int(np.mean(b)))
-    # print(color)
-
+    img = cv2.imread('cavity_enhance.png')
+    # 边缘检测
 
     # hist_full = cv2.calcHist([img],[1],None,[256],[0,256])
     # # cv2.imshow('img_hist', hist_full)
@@ -303,20 +252,10 @@ def put_text_into_image(origin_cv_image, lt, rb, text, font):
     # plot.show()
     # cv2.waitKey()
     # cv2.destroyAllWindows()
-    img = cv2.imread('cavity_enhance.png')
 
     canny_img = cv2.Canny(img, 200, 150)
     cv2.imwrite('cavity_canny.png', canny_img)
     # 边缘检测
-
-    # 获取颜色
-    # 1. 获取轮廓，缩小轮廓让其刚好经过线上的点，取点的颜色
-    # 2. 获取轮廓，缩小轮廓让其刚好经过线上的点，取所有点的颜色的平均值
-    # 3. 直方图，取2个波峰的值，一个是背景一个是字体颜色
-    # 4. 取区域内平均色值
-    img = cv2.imread('cavity_canny.png', 1)
-    color = findColor(text_img, cv2.Canny(text_img, 200, 150))
-    # 获取颜色
 
     # 梯度运算
     img = cv2.imread('cavity_canny.png', 1)
@@ -324,34 +263,6 @@ def put_text_into_image(origin_cv_image, lt, rb, text, font):
     img2 = cv2.morphologyEx(img, cv2.MORPH_GRADIENT, k)  
     cv2.imwrite('cavity_gradient.png', img2)
     # 梯度运算
-
-    # img3 = cv2.imread('cavity_enhance.png')
-    # img3=cv2.cvtColor(img3,cv2.COLOR_BGR2GRAY)
-    # retv,thresh = cv2.threshold(img3,125,255,1)
-    # cnts,hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    # # cv2.drawContours(img3,cnts,-1,(100,100,100),3,lineType=cv2.LINE_AA)
-    # cnts = np.array(cnts)[[cv2.contourArea(c)>10 for c in cnts]]
-    # grains = [np.int0(cv2.boxPoints(cv2.minAreaRect(c))) for c in cnts]
-    # centroids =[(grain[2][1]-(grain[2][1]-grain[0][1])//2, grain[2][0]-(grain[2][0]-grain[0][0])//2) for grain in grains]
-    # resized = imutils.resize(img3, width=900)
-
-    # colors = [resized[centroid] for centroid in centroids]
-    # r = []
-    # g = []
-    # b = []
-    # for it in colors:
-    #     r.append(it[0])
-    #     g.append(it[1])
-    #     b.append(it[2])
-    
-    # print(np.mean(r), 1111)
-    # print(np.mean(g), 2222)
-    # print(np.mean(b), 3333)
-
-
-    # cv2.imshow('new_image', img3)
-    # cv2.waitKey()
-    # cv2.destroyAllWindows()
 
     # 图像修复，将通过梯度运算出来的图片与原始图像进行融合
     repair_cv_image = repair(origin_cv_image, lt, rb)
@@ -379,7 +290,9 @@ def write(IMG, lt, rb, text, font, color):
     #PIL图片转换为numpy
     img_ocv = np.array(img_pil)                     
     IMG = cv2.cvtColor(img_ocv,cv2.COLOR_RGB2BGR)
-    return cv2.rectangle(IMG, lt, rb, (0,255,0), 3)
+    # 圈出图片上文字区域
+    # return cv2.rectangle(IMG, lt, rb, (0,255,0), 3)
+    return IMG
 
 if __name__ == '__main__':
     # 读取文件
