@@ -4,7 +4,7 @@ import time
 
 start = time.time()
 
-img_fp = 'images/10.png'
+img_fp = '../images/10.png'
 ocr = CnOcr()  # 所有参数都使用默认值
 out = ocr.ocr(img_fp)
 

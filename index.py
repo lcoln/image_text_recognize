@@ -39,6 +39,9 @@ def detect(imagePath, lang):
         left_top_coordinate = tuple(detection[0][0])
         # easyocr获取到文字区域的右上角坐标
         right_bottom_coordinate = tuple(detection[0][2])
+        # 裁剪一部分边角，去除多余部分
+        left_top_coordinate1 = (left_top_coordinate[0] + 10, left_top_coordinate[1] + 10)
+        right_bottom_coordinate1 = (right_bottom_coordinate[0] - 10, right_bottom_coordinate[1] - 10)
         # easyocr获取到的文字
         text = detection[1]
         texts.append(text)
@@ -46,6 +49,8 @@ def detect(imagePath, lang):
         result.append([
             left_top_coordinate, 
             right_bottom_coordinate, 
+            left_top_coordinate1,
+            right_bottom_coordinate1,
             text, 
         ])
         
@@ -53,7 +58,7 @@ def detect(imagePath, lang):
     # print(result)
     allTexts = transformText(texts)
     for inx, val in enumerate(result):
-        ltc, rbc, t = val
+        ltc, rbc, ltc1, rbc1, t = val
         font = ImageFont.load_default()
         #字体大小
         fontScale = int(abs(ltc[0] - rbc[0]) / len(allTexts[inx]))
@@ -70,7 +75,7 @@ def detect(imagePath, lang):
         # 3. 将原图进行腐蚀，获取轮廓，缩小轮廓让其刚好经过线上的点，取点的颜色
         # 4. 直方图，取2个波峰的值，一个是背景一个是字体颜色
         # 5. 取区域内平均色值
-        color = get_text_color(origin_cv_image[ltc[1]:rbc[1], ltc[0]:rbc[0]])
+        color = get_text_color(origin_cv_image[ltc1[1]:rbc1[1], ltc1[0]:rbc1[0]])
 
         font = ImageFont.truetype(
             fontType, 
@@ -78,7 +83,7 @@ def detect(imagePath, lang):
             encoding="unic"
         )
         origin_cv_image = put_text_into_image(
-            origin_cv_image, ltc, rbc, allTexts[inx], font, color
+            origin_cv_image, ltc, rbc, allTexts[inx], font, color, fontScale
         )
     return origin_cv_image
 
@@ -136,37 +141,81 @@ def perimeter(poly):
         p += abs(np.linalg.norm(poly[i % nums] - poly[(i + 1) % nums]))
     return p
 
+# 判断底色
+def is_black_bg(img, bwThresh):
+    gray = cv2.cvtColor(img.copy(), cv2.COLOR_BGR2GRAY)  # gray image
+    ret, thresh = cv2.threshold(gray, bwThresh, 255, cv2.THRESH_BINARY)  # binarization
+    # get h and w of img
+    imgShape = img.shape
+    h = imgShape[0]
+    w = imgShape[1]
+    # init black and white point number
+    blackNum, whiteNum = 0, 0
+    k = h / w
+    for x in range(w):
+        y1 = int(k * x)
+        y2 = int((-k) * x + h - 1)
+        # prevent overflow
+        if 0 <= y1 <= (h - 1) and 0 <= y2 <= (h - 1):
+            # first diagonal line
+            if thresh[y1][x] == 0:
+                blackNum += 1
+            else:
+                whiteNum += 1
+            # second diagonal line
+            if thresh[y2][x] == 0:
+                blackNum += 1
+            else:
+                whiteNum += 1
+    print(blackNum, whiteNum)
+    if blackNum > whiteNum:
+        return True
+    else:
+        return False
+
 def get_text_color(originImg):
+    img = originImg.copy()
+
+    # 判断是否黑色背景，如果是则二值化后会是黑底白字
+    is_black = is_black_bg(img, 127)
 
     # 指定范围为3*3的矩阵，kernel（卷积核核）指定为全为1的33矩阵，卷积计算后，该像素点的值等于以该像素点为中心的3*3范围内的最大值。
     # kernel = np.ones((3, 3),np.uint8)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(2, 2))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(3, 3))
 
     # 灰度
-    gray_img = cv2.cvtColor(originImg, cv2.COLOR_BGR2GRAY)
+    gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     # 二值化
+    # 大于127的变白，小于127的变黑
+    # todo
+    # 如果字体颜色和背景色相近，则可能二值化后同色了，比如同为黑色
+    # 1. 提高阙值，提高判断深色的范围
     _,RedThresh = cv2.threshold(gray_img,127,255,cv2.THRESH_BINARY)
-    # 腐蚀，由于我们是二值图像，所以只要包含周围黑的部分，就变为黑的。
-    # binarization = cv2.erode(RedThresh,kernel)
-    # 膨胀，由于我们是二值图像，所以只要包含周围白的部分，就变为白的。
-    binarization = cv2.dilate(RedThresh,kernel)
+    # 目的：让字体瘦身，好让轨迹经过字体，能获取到轨迹上的点的rbg
+    if is_black:
+        # 腐蚀，由于我们是二值图像，所以只要包含周围黑的部分，就变为黑的。如果是黑底白字，则白字瘦身。
+        binarization = cv2.erode(RedThresh,kernel)
+    else:
+        # 膨胀，由于我们是二值图像，所以只要包含周围白的部分，就变为白的。如果是白底黑字，则黑字瘦身。
+        binarization = cv2.dilate(RedThresh,kernel)
 
     cnts,hierarchy = cv2.findContours(binarization,cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
+    # test
+    # img1=cv2.drawContours(img,cnts,-1,(255,73,95),1)
+    # cv2.imshow('new_image', img1)
+    # cv2.waitKey()
     if len(cnts)>=2 and (cnts[1] & cnts[1][0] & cnts[1][0][0]).any():
         point = list(cnts[1][0][0])
-        # test
-        # img=cv2.drawContours(originImg,cnts,-1,(0,0,0),1)
-        # cv2.imshow('new_image', img)
-        # cv2.waitKey()
     else:
         point = None
     if point:
+        # GBR
         color = tuple(originImg[point[1], point[0]])
     else:
         color = (0,0,0)
-    return color
+    return color[::-1]
 
-def put_text_into_image(origin_cv_image, lt, rb, text, font, color):
+def put_text_into_image(origin_cv_image, lt, rb, text, font, color, fontScale):
     size = 3
     # 裁剪文本坐标，[y0:y1, x0:x1]
     text_img = origin_cv_image[lt[1]:rb[1], lt[0]:rb[0]] 
@@ -184,10 +233,14 @@ def put_text_into_image(origin_cv_image, lt, rb, text, font, color):
     canny_img = cv2.Canny(img, 200, 150)
     cv2.imwrite('canny_img.png', canny_img)
     # 边缘检测
-
+    # print(fontScale, 'fontscale', text)
     # 梯度运算
+    rate = int(fontScale/2)
+    if rate > 15:
+        rate = 15
+    # print(rate)
     img = cv2.imread('canny_img.png', 1)
-    k = np.ones((15, 15), np.uint8)
+    k = np.ones((rate, rate), np.uint8)
     img2 = cv2.morphologyEx(img, cv2.MORPH_GRADIENT, k)  
     cv2.imwrite('gradient_img.png', img2)
     # 梯度运算
