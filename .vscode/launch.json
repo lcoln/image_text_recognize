@@ -14,7 +14,7 @@
       "stopOnEntry": true,
       "args": [
         "images/1.png",
-        "ch_tra",
+        "ch_sim",
         "en"
       ]
     }

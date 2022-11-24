@@ -39,9 +39,6 @@ def detect(imagePath, lang):
         left_top_coordinate = tuple(detection[0][0])
         # easyocr获取到文字区域的右上角坐标
         right_bottom_coordinate = tuple(detection[0][2])
-        # 裁剪一部分边角，去除多余部分
-        left_top_coordinate1 = (left_top_coordinate[0] + 10, left_top_coordinate[1] + 10)
-        right_bottom_coordinate1 = (right_bottom_coordinate[0] - 10, right_bottom_coordinate[1] - 10)
         # easyocr获取到的文字
         text = detection[1]
         texts.append(text)
@@ -49,22 +46,21 @@ def detect(imagePath, lang):
         result.append([
             left_top_coordinate, 
             right_bottom_coordinate, 
-            left_top_coordinate1,
-            right_bottom_coordinate1,
             text, 
         ])
         
-    print(texts)
-    # print(result)
+    print(result)
     allTexts = transformText(texts)
+    print(allTexts)
     for inx, val in enumerate(result):
-        ltc, rbc, ltc1, rbc1, t = val
+        ltc, rbc, t = val
         font = ImageFont.load_default()
         #字体大小
         fontScale = int(abs(ltc[0] - rbc[0]) / len(allTexts[inx]))
-        # fontScale = fontScale * 2
-        # test
-        # fontScale = int(fontScale * 3)
+        # if 'en' in lang:
+        #     fontScale = fontScale * 2
+            # test
+            # fontScale = int(fontScale * 3)
         # 加载字体并定义其编码方式和大小
 
 
@@ -75,8 +71,19 @@ def detect(imagePath, lang):
         # 3. 将原图进行腐蚀，获取轮廓，缩小轮廓让其刚好经过线上的点，取点的颜色
         # 4. 直方图，取2个波峰的值，一个是背景一个是字体颜色
         # 5. 取区域内平均色值
-        color = get_text_color(origin_cv_image[ltc1[1]:rbc1[1], ltc1[0]:rbc1[0]])
-
+        # 裁剪一部分边角，去除多余部分
+        color = get_text_color(
+            # cv2.resize(img, (0, 0), fx=fx, fy=fy, interpolation=cv2.INTER_CUBIC)
+            cv2.resize(
+                origin_cv_image[ltc[1] + 10:rbc[1] - 10, ltc[0] + 10:rbc[0] - 10], 
+                (0, 0),
+                fx=10, 
+                fy=10,
+                interpolation=cv2.INTER_CUBIC
+            )
+            # origin_cv_image[ltc[1] + 10:rbc[1] - 10, ltc[0] + 10:rbc[0] - 10],
+            # origin_cv_image[ltc[1]:rbc[1], ltc[0]:rbc[0]]
+        )
         font = ImageFont.truetype(
             fontType, 
             fontScale, 
@@ -167,11 +174,16 @@ def is_black_bg(img, bwThresh):
                 blackNum += 1
             else:
                 whiteNum += 1
-    print(blackNum, whiteNum)
+    # print(blackNum, whiteNum)
     if blackNum > whiteNum:
         return True
     else:
         return False
+
+def draw(img, cnts):
+    cv2.imshow('new_image', cv2.drawContours(img,cnts,-1,(255,73,95),1))
+    cv2.waitKey()
+
 
 def get_text_color(originImg):
     img = originImg.copy()
@@ -181,7 +193,7 @@ def get_text_color(originImg):
 
     # 指定范围为3*3的矩阵，kernel（卷积核核）指定为全为1的33矩阵，卷积计算后，该像素点的值等于以该像素点为中心的3*3范围内的最大值。
     # kernel = np.ones((3, 3),np.uint8)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(3, 3))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(14, 14))
 
     # 灰度
     gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -190,20 +202,46 @@ def get_text_color(originImg):
     # todo
     # 如果字体颜色和背景色相近，则可能二值化后同色了，比如同为黑色
     # 1. 提高阙值，提高判断深色的范围
+    # 2. https://patents.google.com/patent/CN1694119A/zh
     _,RedThresh = cv2.threshold(gray_img,127,255,cv2.THRESH_BINARY)
+    cnts,hierarchy = cv2.findContours(RedThresh,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+
+    
+    # 计算轮廓面积，与总面积进行对比，算出字体占比，如果字体面积较大，则背景色应该相反，因为背景色取值原理为遍历所有像素点颜色进行大(255)小(0)匹配    
+    area = 0
+    for item in cnts:
+        # print(1)
+        draw(img, [item])
+        item_area = cv2.contourArea(item)
+        print(item_area)
+        area += item_area
+    w = img.shape[0]
+    h = img.shape[1]
+    print(area, 'done')
+    print(w * h, 'done')
+    print(is_black, 'done')
     # 目的：让字体瘦身，好让轨迹经过字体，能获取到轨迹上的点的rbg
-    if is_black:
-        # 腐蚀，由于我们是二值图像，所以只要包含周围黑的部分，就变为黑的。如果是黑底白字，则白字瘦身。
+    # if not is_black & (area / (w * h) > 0.5):
+    #     # 腐蚀，由于我们是二值图像，所以只要包含周围黑的部分，就变为黑的。如果是黑底白字，则白字瘦身。
+    #     binarization = cv2.erode(RedThresh,kernel)
+    # elif is_black & (area / (w * h) < 0.5):
+    #     # 膨胀，由于我们是二值图像，所以只要包含周围白的部分，就变为白的。如果是白底黑字，则黑字瘦身。
+    #     binarization = cv2.dilate(RedThresh,kernel)
+    # else:
+    #     # 膨胀，由于我们是二值图像，所以只要包含周围白的部分，就变为白的。如果是白底黑字，则黑字瘦身。
+    #     binarization = cv2.dilate(RedThresh,kernel)
+
+    # 如果是黑色背景，则area代表字体面积，字体面积占比小于整体面积一半，则确定为黑底白字
+    if is_black & (area / (w * h) < 0.5):
         binarization = cv2.erode(RedThresh,kernel)
     else:
-        # 膨胀，由于我们是二值图像，所以只要包含周围白的部分，就变为白的。如果是白底黑字，则黑字瘦身。
         binarization = cv2.dilate(RedThresh,kernel)
+
 
     cnts,hierarchy = cv2.findContours(binarization,cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
     # test
-    # img1=cv2.drawContours(img,cnts,-1,(255,73,95),1)
-    # cv2.imshow('new_image', img1)
-    # cv2.waitKey()
+    # draw(img, cnts)
+
     if len(cnts)>=2 and (cnts[1] & cnts[1][0] & cnts[1][0][0]).any():
         point = list(cnts[1][0][0])
     else:
@@ -238,6 +276,8 @@ def put_text_into_image(origin_cv_image, lt, rb, text, font, color, fontScale):
     rate = int(fontScale/2)
     if rate > 15:
         rate = 15
+    # test
+    rate = 15
     # print(rate)
     img = cv2.imread('canny_img.png', 1)
     k = np.ones((rate, rate), np.uint8)
@@ -254,7 +294,7 @@ def put_text_into_image(origin_cv_image, lt, rb, text, font, color, fontScale):
     # 在修复完的图片块上写入文本
 
 def write(IMG, lt, rb, text, font, color):
-    print(color)
+    # print(color)
     # 将图片的array转换成image
     img_pil = Image.fromarray(cv2.cvtColor(IMG, cv2.COLOR_BGR2RGB))
     # 进行图像绘制
