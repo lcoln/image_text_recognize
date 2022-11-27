@@ -7,6 +7,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import requests
 import json
+from matplotlib import pyplot as plt 
 
 url = "http://localhost:3336/overseas/translate"
 headers = {'content-type': 'application/json'}
@@ -148,110 +149,188 @@ def perimeter(poly):
         p += abs(np.linalg.norm(poly[i % nums] - poly[(i + 1) % nums]))
     return p
 
-# 判断底色
-def is_black_bg(img, bwThresh):
-    gray = cv2.cvtColor(img.copy(), cv2.COLOR_BGR2GRAY)  # gray image
-    ret, thresh = cv2.threshold(gray, bwThresh, 255, cv2.THRESH_BINARY)  # binarization
-    # get h and w of img
-    imgShape = img.shape
-    h = imgShape[0]
-    w = imgShape[1]
-    # init black and white point number
-    blackNum, whiteNum = 0, 0
-    k = h / w
-    for x in range(w):
-        y1 = int(k * x)
-        y2 = int((-k) * x + h - 1)
-        # prevent overflow
-        if 0 <= y1 <= (h - 1) and 0 <= y2 <= (h - 1):
-            # first diagonal line
-            if thresh[y1][x] == 0:
-                blackNum += 1
-            else:
-                whiteNum += 1
-            # second diagonal line
-            if thresh[y2][x] == 0:
-                blackNum += 1
-            else:
-                whiteNum += 1
-    # print(blackNum, whiteNum)
-    if blackNum > whiteNum:
-        return True
-    else:
-        return False
-
 def draw(img, cnts):
-    cv2.imshow('new_image', cv2.drawContours(img,cnts,-1,(255,73,95),1))
+    cv2.imshow('描边', cv2.drawContours(img,cnts,-1,(255,73,95),5))
     cv2.waitKey()
 
+def show(name, img):
+    cv2.imshow(name, img)
+    cv2.waitKey()
+
+def calcGrayHist(grayimage):
+  # 灰度图像矩阵的高，宽
+  rows, cols = grayimage.shape
+
+  # 存储灰度直方图
+  grayHist = np.zeros([256], np.uint64)
+  for r in range(rows):
+    for c in range(cols):
+      grayHist[grayimage[r][c]] += 1
+
+  return grayHist
+
+# 阈值分割：直方图技术法
+def threshTwoPeaks(image):
+  #转换为灰度图
+  if len(image.shape) == 2:
+    gray = image
+  else:
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+  # 计算灰度直方图
+  histogram = calcGrayHist(gray)
+  # 寻找灰度直方图的最大峰值对应的灰度值
+  maxLoc = np.where(histogram == np.max(histogram))
+  # print(maxLoc)
+  firstPeak = maxLoc[0][0] #灰度值
+  # 寻找灰度直方图的第二个峰值对应的灰度值
+  measureDists = np.zeros([256], np.float32)
+  for k in range(256):
+    measureDists[k] = pow(k - firstPeak, 2) * histogram[k] #综合考虑 两峰距离与峰值
+  maxLoc2 = np.where(measureDists == np.max(measureDists))
+  secondPeak = maxLoc2[0][0]
+  print('双峰为：',firstPeak,secondPeak)
+  
+  return [firstPeak,secondPeak]
+
+def get_max_color(originImg):
+  img = originImg.copy()
+
+  # 灰度
+  gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+  
+  # 将图片数据转一维
+  n, bins, patches = plt.hist(gray_img.ravel(), 256, [0, 256])
+  plt.show()
+  plt.close(1)
+  # max_i = np.array(n).argmax(axis=0)
+  max_i = np.argsort(n)[-1]
+  max_i_f = np.argsort(n)[-2]
+  return [max_i, max_i_f]
+
+def get_redThresh(gray_img, min_color, max_color):
+  gap = int(abs(max_color - min_color) / 2)
+  
+  # 黑色居多，但不知道是背景还是字
+  if min_color < max_color:
+    _,RedThresh = cv2.threshold(gray_img, min_color + gap, 255,cv2.THRESH_BINARY_INV)
+  else:
+    _,RedThresh = cv2.threshold(gray_img, max_color + gap, 255,cv2.THRESH_BINARY)
+  
+  return RedThresh
+
+def get_font_color_ratio(originImg, min_color, max_color):
+
+  img = originImg.copy()
+  canny_img = cv2.Canny(img, 200, 150)
+  gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+  RedThresh = get_redThresh(gray_img, min_color, max_color)
+  # show('RedThresh', RedThresh)
+
+  cnts,hierarchy = cv2.findContours(RedThresh,cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
+  # cnts = np.delete(cnts, 0)
+
+  # show(RedThresh)
+  # draw(img, cnts)
+  
+  # 计算轮廓面积，与总面积进行对比，算出字体占比，如果字体面积较大，则背景色应该相反，因为背景色取值原理为遍历所有像素点颜色进行大(255)小(0)匹配    
+  area = 0
+  for item in cnts:
+    # print(1)
+    # draw(img, [item])
+    item_area = cv2.contourArea(item)
+    # print(item_area)
+    area += item_area
+
+  w = originImg.shape[0]
+  h = originImg.shape[1]
+
+  return area / (w * h)
 
 def get_text_color(originImg):
-    img = originImg.copy()
+  img = originImg.copy()
+  img = cv2.pyrMeanShiftFiltering(img, 10, 50)
+  # 获取占比最大的颜色rgb
+  # [max_color, min_color] = get_max_color(img)
+  [max_color, min_color] = threshTwoPeaks(img)
+  
+  # 获取数值最大的颜色rgb
+  max_value = max([max_color, min_color])
+  min_value = min([max_color, min_color])
+  print(max_color, 'max_color')
+  print(min_color, 'min_color')
+  # 获取占比最大的颜色
 
-    # 判断是否黑色背景，如果是则二值化后会是黑底白字
-    is_black = is_black_bg(img, 127)
+  # 获取字体轮廓内面积、计算其与总面积占比
+  ratio = get_font_color_ratio(img, min_color, max_color)
+  # 获取字体轮廓内面积、计算其与总面积占比
 
-    # 指定范围为3*3的矩阵，kernel（卷积核核）指定为全为1的33矩阵，卷积计算后，该像素点的值等于以该像素点为中心的3*3范围内的最大值。
-    # kernel = np.ones((3, 3),np.uint8)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(14, 14))
+  # 计算出阈值与二值化的策略和应该填充的颜色值
+  gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+  # 如果字体轮廓占比大于总面积一半，则字体颜色为颜色最大值
+  gap = int(abs(max_color - min_color) / 2)
+  
+  kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(8, 8))
+  print(ratio, 'ratio')
+  if ratio > 0.5:  
 
-    # 灰度
-    gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    # 二值化
-    # 大于127的变白，小于127的变黑
-    # todo
-    # 如果字体颜色和背景色相近，则可能二值化后同色了，比如同为黑色
-    # 1. 提高阙值，提高判断深色的范围
-    # 2. https://patents.google.com/patent/CN1694119A/zh
-    _,RedThresh = cv2.threshold(gray_img,127,255,cv2.THRESH_BINARY)
-    cnts,hierarchy = cv2.findContours(RedThresh,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+    RedThresh = get_redThresh(gray_img, min_color, max_color)
 
-    
-    # 计算轮廓面积，与总面积进行对比，算出字体占比，如果字体面积较大，则背景色应该相反，因为背景色取值原理为遍历所有像素点颜色进行大(255)小(0)匹配    
-    area = 0
-    for item in cnts:
-        # print(1)
-        draw(img, [item])
-        item_area = cv2.contourArea(item)
-        print(item_area)
-        area += item_area
-    w = img.shape[0]
-    h = img.shape[1]
-    print(area, 'done')
-    print(w * h, 'done')
-    print(is_black, 'done')
-    # 目的：让字体瘦身，好让轨迹经过字体，能获取到轨迹上的点的rbg
-    # if not is_black & (area / (w * h) > 0.5):
-    #     # 腐蚀，由于我们是二值图像，所以只要包含周围黑的部分，就变为黑的。如果是黑底白字，则白字瘦身。
-    #     binarization = cv2.erode(RedThresh,kernel)
-    # elif is_black & (area / (w * h) < 0.5):
-    #     # 膨胀，由于我们是二值图像，所以只要包含周围白的部分，就变为白的。如果是白底黑字，则黑字瘦身。
-    #     binarization = cv2.dilate(RedThresh,kernel)
+    # if max_color > min_color:
+    #   print('黑底白字1')
+    #   _,RedThresh = cv2.threshold(gray_img, min_color + gap, 255,cv2.THRESH_BINARY)
     # else:
-    #     # 膨胀，由于我们是二值图像，所以只要包含周围白的部分，就变为白的。如果是白底黑字，则黑字瘦身。
-    #     binarization = cv2.dilate(RedThresh,kernel)
+    #   print('白底黑字2')
+    #   _,RedThresh = cv2.threshold(gray_img, max_color + gap, 255,cv2.THRESH_BINARY_INV)
 
-    # 如果是黑色背景，则area代表字体面积，字体面积占比小于整体面积一半，则确定为黑底白字
-    if is_black & (area / (w * h) < 0.5):
-        binarization = cv2.erode(RedThresh,kernel)
+    # # 白底黑字
+    # if max_color < 127:
+    #   binarization = cv2.dilate(RedThresh,kernel)
+    # # 黑底白字
+    # if max_color > 127:
+    #   binarization = cv2.erode(RedThresh,kernel)
+  else:
+
+    # 白底黑字
+    if max_color > min_color:
+      print('白底黑字3')
+      _,RedThresh = cv2.threshold(gray_img, min_color + gap, 255,cv2.THRESH_BINARY)
+    # 黑底白字
     else:
-        binarization = cv2.dilate(RedThresh,kernel)
+      print('黑底白字4')
+      _,RedThresh = cv2.threshold(gray_img, max_color + gap, 255,cv2.THRESH_BINARY_INV)
 
+    # print(cv2.THRESH_BINARY_INV, 'THRESH_BINARY_INV')
+    # # 黑底白字
+    # if max_color < 127:
+    #   binarization = cv2.erode(RedThresh,kernel)
+    # # 白底黑字
+    # if max_color > 127:
+    #   binarization = cv2.dilate(RedThresh,kernel)
 
-    cnts,hierarchy = cv2.findContours(binarization,cv2.CV_RETR_CCOMP,cv2.CHAIN_APPROX_SIMPLE)
-    # test
-    # draw(img, cnts)
+  # 统一成白底黑字
+  binarization = cv2.dilate(RedThresh,kernel)
 
-    if len(cnts)>=2 and (cnts[1] & cnts[1][0] & cnts[1][0][0]).any():
-        point = list(cnts[1][0][0])
-    else:
-        point = None
-    if point:
-        # GBR
-        color = tuple(originImg[point[1], point[0]])
-    else:
-        color = (0,0,0)
-    return color[::-1]
+  # print(gap, 'gap')
+  
+  # draw(img, cnts)
+  # show('gray_img', gray_img)
+  # show('RedThresh', RedThresh)
+  # show('binarization', binarization)
+
+  cnts,hierarchy = cv2.findContours(binarization,cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
+  if len(cnts)>=2 and (cnts[0] & cnts[0][0] & cnts[0][0][0]).any():
+      point = list(cnts[0][0][0])
+  else:
+      point = None
+  if point:
+      # GBR
+      color = tuple(originImg[point[1], point[0]])
+  else:
+      color = (0,0,0)
+  return color[::-1]
+
+  # 计算出阈值与二值化的策略和应该填充的颜色值
 
 def put_text_into_image(origin_cv_image, lt, rb, text, font, color, fontScale):
     size = 3
