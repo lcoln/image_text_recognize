@@ -27,83 +27,75 @@ def transformText(text):
   requestData = {"text": text}
   ret = requests.post(url, json=requestData, headers=headers)
   if ret.status_code == 200:
-      texts = json.loads(ret.text)
-      texts = texts['data']['TargetTextList']
+    texts = json.loads(ret.text)
+    texts = texts['data']['TargetTextList']
   return texts
   return text
 
 def detect(imagePath, lang):
-    # 解析繁体/英文/数字
-    reader = easyocr.Reader(lang)
-    RST = reader.readtext(imagePath)
-    
-    origin_cv_image = cv2.imread(imagePath)
-    result = []
-    texts = []
+  # 解析繁体/英文/数字
+  reader = easyocr.Reader(lang)
+  RST = reader.readtext(imagePath)
+  
+  origin_cv_image = cv2.imread(imagePath)
+  result = []
+  texts = []
 
-    for detection in RST:
-        # easyocr获取到文字区域的左上角坐标
-        left_top_coordinate = tuple(detection[0][0])
-        # easyocr获取到文字区域的右上角坐标
-        right_bottom_coordinate = tuple(detection[0][2])
-        # easyocr获取到的文字
-        text = detection[1]
-        texts.append(text)
-              
-        result.append([
-            left_top_coordinate, 
-            right_bottom_coordinate, 
-            text, 
-        ])
-        
-    allTexts = transformText(texts)
-    for inx, val in enumerate(result):
-        ltc, rbc, t = val
-        font = ImageFont.load_default()
-        #字体大小
-        fontScale = int(abs(ltc[0] - rbc[0]) / len(allTexts[inx]))
-        # 如果是英文句子,则字体大小进行一个2.2倍的放大，暂时以这个方案解决字体过小问题
-        if pattern.fullmatch(allTexts[inx]):
-          # fontScale = fontScale * 2
-          # test
-          fontScale = int(fontScale * 2.2)
+  for detection in RST:
+    # easyocr获取到文字区域的左上角坐标
+    left_top_coordinate = tuple(detection[0][0])
+    # easyocr获取到文字区域的右上角坐标
+    right_bottom_coordinate = tuple(detection[0][2])
+    # easyocr获取到的文字
+    text = detection[1]
+    texts.append(text)
+          
+    result.append([
+      left_top_coordinate, 
+      right_bottom_coordinate, 
+      text, 
+    ])
+      
+  allTexts = transformText(texts)
+  for inx, val in enumerate(result):
+    ltc, rbc, t = val
+    font = ImageFont.load_default()
+    #字体大小
+    fontScale = int(abs(ltc[0] - rbc[0]) / len(allTexts[inx]))
+    # 如果是英文句子,则字体大小进行一个2.2倍的放大，暂时以这个方案解决字体过小问题
+    if pattern.fullmatch(allTexts[inx]):
+      # fontScale = fontScale * 2
+      # test
+      fontScale = int(fontScale * 2.2)
 
-        # todo, 5个思路
-        # 字体颜色
-        # 1. 获取轮廓，缩小轮廓让其刚好经过线上的点，取点的颜色
-        # 2. 获取轮廓，缩小轮廓让其刚好经过线上的点，取所有点的颜色的平均值
-        # 3. 通过获取图片双峰值，通过双峰值对图像二值化处理后，得到文字轮廓，通过计算文字轮廓面积与总面积占比，得出二值化结果是白底黑字还是黑字白底，然后再通过二值化将其统一成白底黑字，将原图进行腐蚀，缩小轮廓让其刚好经过线上的点，取点的颜色
-        # 4. 直方图，取2个波峰的值，一个是背景一个是字体颜色
-        # 5. 取区域内平均色值
-        # 裁剪一部分边角，去除多余部分
-        color = get_text_color(
-            # cv2.resize(img, (0, 0), fx=fx, fy=fy, interpolation=cv2.INTER_CUBIC)
-            cv2.resize(
-                # origin_cv_image[ltc[1] + 10:rbc[1] - 10, ltc[0] + 10:rbc[0] - 10], 
-                origin_cv_image[ltc[1]:rbc[1], ltc[0]:rbc[0]], 
-                (0, 0),
-                fx=10, 
-                fy=10,
-                interpolation=cv2.INTER_CUBIC
-            )
-            # origin_cv_image[ltc[1] + 10:rbc[1] - 10, ltc[0] + 10:rbc[0] - 10],
-            # origin_cv_image[ltc[1]:rbc[1], ltc[0]:rbc[0]]
-        )
-        font = ImageFont.truetype(
-            fontType, 
-            fontScale, 
-            encoding="unic"
-        )
-        origin_cv_image = put_text_into_image(
-            origin_cv_image, ltc, rbc, allTexts[inx], font, color, fontScale
-        )
-    return origin_cv_image
-
-
-def replace_zeroes(data):
-    min_nonzero = min(data[np.nonzero(data)])
-    data[data == 0] = min_nonzero
-    return data
+    # todo, 5个思路
+    # 字体颜色
+    # 1. 获取轮廓，缩小轮廓让其刚好经过线上的点，取点的颜色
+    # 2. 获取轮廓，缩小轮廓让其刚好经过线上的点，取所有点的颜色的平均值
+    # 3. 通过获取图片双峰值，通过双峰值对图像二值化处理后，得到文字轮廓，通过计算文字轮廓面积与总面积占比，得出二值化结果是白底黑字还是黑字白底，然后再通过二值化将其统一成白底黑字，将原图进行腐蚀，缩小轮廓让其刚好经过线上的点，取点的颜色
+    # 4. 直方图，取2个波峰的值，一个是背景一个是字体颜色
+    # 5. 取区域内平均色值
+    # 裁剪一部分边角，去除多余部分
+    color = get_text_color(
+      # cv2.resize(img, (0, 0), fx=fx, fy=fy, interpolation=cv2.INTER_CUBIC)
+      cv2.resize(
+        # origin_cv_image[ltc[1] + 10:rbc[1] - 10, ltc[0] + 10:rbc[0] - 10], 
+        origin_cv_image[ltc[1]:rbc[1], ltc[0]:rbc[0]], 
+        (0, 0),
+        fx=10, 
+        fy=10,
+        interpolation=cv2.INTER_CUBIC
+      )
+    )
+    font = ImageFont.truetype(
+      fontType, 
+      fontScale, 
+      encoding="unic"
+    )
+    origin_cv_image = put_text_into_image(
+      origin_cv_image, ltc, rbc, allTexts[inx], font, color, fontScale
+    )
+  return origin_cv_image
 
 # 修复图像
 def repair(origin_cv_image, lt, rb):
@@ -120,12 +112,12 @@ def repair(origin_cv_image, lt, rb):
   return origin_cv_image
 
 def draw(img, cnts):
-    cv2.imshow('描边', cv2.drawContours(img,cnts,-1,(255,73,95),5))
-    cv2.waitKey()
+  cv2.imshow('描边', cv2.drawContours(img,cnts,-1,(255,73,95),5))
+  cv2.waitKey()
 
 def show(name, img):
-    cv2.imshow(name, img)
-    cv2.waitKey()
+  cv2.imshow(name, img)
+  cv2.waitKey()
 
 def calcGrayHist(grayimage):
   # 灰度图像矩阵的高，宽
@@ -289,14 +281,14 @@ def get_text_color(originImg):
   # draw(img, cnts)
 
   if len(cnts)>=2 and (cnts[0] & cnts[0][0] & cnts[0][0][0]).any():
-      point = list(cnts[0][0][0])
+    point = list(cnts[0][0][0])
   else:
-      point = None
+    point = None
   if point:
-      # GBR
-      color = tuple(originImg[point[1], point[0]])
+    # GBR
+    color = tuple(originImg[point[1], point[0]])
   else:
-      color = (0,0,0)
+    color = (0,0,0)
   return color[::-1]
 
   # 计算出阈值与二值化的策略和应该填充的颜色值
@@ -318,7 +310,7 @@ def put_text_into_image(origin_cv_image, lt, rb, text, font, color, fontScale):
   # 梯度运算
   rate = int(fontScale/2)
   if rate > 15:
-      rate = 15
+    rate = 15
   # test
   rate = 15
   # print(rate)
@@ -352,12 +344,12 @@ def write(IMG, lt, rb, text, font, color):
   return IMG
 
 if __name__ == '__main__':
-    # 读取文件
-    _, imagePath, *lang = sys.argv
-    if(len(lang) == 0):
-        lang = ["ch_sim", "en"]
-    new_image = detect(sys.argv[1], lang)
-    
-    cv2.imshow('new_image', new_image)
-    cv2.waitKey()
-    cv2.destroyAllWindows()
+  # 读取文件
+  _, imagePath, *lang = sys.argv
+  if(len(lang) == 0):
+    lang = ["ch_sim", "en"]
+  new_image = detect(sys.argv[1], lang)
+  
+  cv2.imshow('new_image', new_image)
+  cv2.waitKey()
+  cv2.destroyAllWindows()
